@@ -1,33 +1,61 @@
-# ==================================================================================
-# CONFIGURATION
-# ==================================================================================
-$API_KEY = "YOUR_GEMINI_API_KEY_HERE"
-$TARGET_FOLDER = "C:\Path\To\Your\Product\Images"
-$OUTPUT_FILE = Join-Path $TARGET_FOLDER "marketplace_listings.txt"
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $true, HelpMessage = "The folder path containing your product images and API key file")]
+    [string]$TARGET_FOLDER,
+
+    [Parameter(Mandatory = $false, HelpMessage = "The name of the text file holding your API key")]
+    [string]$KEY_FILE_NAME = "api_key.txt"
+)
+
+# Resolve the path to ensure it's absolute
+$ResolvedFolder = Resolve-Path $TARGET_FOLDER
+$KeyFilePath = Join-Path $ResolvedFolder $KEY_FILE_NAME
+$OUTPUT_FILE = Join-Path $ResolvedFolder "marketplace_listings.txt"
+
+# 1. Check if the API key file exists and read it
+if (-not (Test-Path $KeyFilePath)) {
+    Write-Host "Error: API key file not found at $KeyFilePath" -ForegroundColor Red
+    Write-Host "Please create a '$KEY_FILE_NAME' file inside the folder containing only your Gemini API key." -ForegroundColor Yellow
+    exit
+}
+
+# Read key and trim any accidental whitespaces/newlines
+$API_KEY = (Get-Content -Path $KeyFilePath -Raw).Trim()
+
+if ([string]::IsNullOrWhiteSpace($API_KEY)) {
+    Write-Host "Error: The API key file at $KeyFilePath is empty." -ForegroundColor Red
+    exit
+}
 
 # ==================================================================================
 # SCRIPT LOGIC
 # ==================================================================================
 $Uri = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$API_KEY"
 
-# Supported image extensions
+# Supported image extensions (excluding the output text file and key file)
 $ImageExtensions = @('.jpg', '.jpeg', '.png', '.webp')
-$Images = Get-ChildItem -Path $TARGET_FOLDER | Where-Object { $_.Extension.ToLower() -in $ImageExtensions }
+$Images = Get-ChildItem -Path $ResolvedFolder | Where-Object { $_.Extension.ToLower() -in $ImageExtensions }
 
 if ($Images.Count -eq 0) {
-    Write-Host "No valid images found in $TARGET_FOLDER" -ForegroundColor Yellow
+    Write-Host "No valid images found in $ResolvedFolder" -ForegroundColor Yellow
     exit
 }
 
+Write-Host "API Key loaded successfully." -ForegroundColor Green
 Write-Host "Found $($Images.Count) images. Starting description generation..." -ForegroundColor Cyan
 "--- MARKETPLACE GENERATED LISTINGS ---`n" | Out-File -FilePath $OUTPUT_FILE -Encoding utf8
 
 foreach ($Image in $Images) {
-    Write-Host "Processing: $($Image.Name)..." -ForegroundColor Data
+    Write-Host "Processing: $($Image.Name)..." -ForegroundColor Cyan
 
     # Convert image to Base64
-    $Bytes = [System.IO.File]::ReadAllBytes($Image.FullName)
-    $Base64Image = [Convert]::ToBase64String($Bytes)
+    try {
+        $Bytes = [System.IO.File]::ReadAllBytes($Image.FullName)
+        $Base64Image = [Convert]::ToBase64String($Bytes)
+    } catch {
+        Write-Host "Failed to read image file $($Image.Name): $_" -ForegroundColor Red
+        continue
+    }
     
     # Determine MIME type
     $MimeType = switch ($Image.Extension.ToLower()) {
