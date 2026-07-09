@@ -8,18 +8,49 @@ To achieve "instant" generation from images, this script leverages the **Google 
 2. **Install PowerShell 7+ (Recommended):** While it can work on older versions, PowerShell 7 handles modern web requests and JSON much more reliably.
 
 ---
+To keep your workflow organized and avoid duplicating your API key across every single product folder, we can change the script to look for `api_key.txt` right in the **current working directory** (where you are executing the script from, i.e., `./`), while still looking for images inside the specified `$TARGET_FOLDER`.
 
-### The PowerShell Script
+Here is the fully updated, cross-platform script reflecting this change:
 
-Save the following code as `Generate-Descriptions.ps1`.
+### The Updated Script (`Generate-Descriptions.ps1`)
 
 ```powershell
-# ==================================================================================
-# CONFIGURATION
-# ==================================================================================
-$API_KEY = "YOUR_GEMINI_API_KEY_HERE"
-$TARGET_FOLDER = "C:\Path\To\Your\Product\Images"
-$OUTPUT_FILE = Join-Path $TARGET_FOLDER "marketplace_listings.txt"
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory = $true, Position = 0, HelpMessage = "The folder path containing your product images")]
+    [string]$TARGET_FOLDER,
+
+    [Parameter(Mandatory = $false, HelpMessage = "The name of the text file holding your API key")]
+    [string]$KEY_FILE_NAME = "api_key.txt"
+)
+
+# 1. Resolve the API Key path from the current directory (./)
+$CurrentDir = Get-Location
+$KeyFilePath = [System.IO.Path]::Combine($CurrentDir, $KEY_FILE_NAME)
+
+if (-not (Test-Path $KeyFilePath)) {
+    Write-Host "Error: API key file not found at $KeyFilePath" -ForegroundColor Red
+    Write-Host "Please place your '$KEY_FILE_NAME' file in the current working directory ($CurrentDir)." -ForegroundColor Yellow
+    exit
+}
+
+# Read key and trim any accidental whitespaces/newlines
+$API_KEY = (Get-Content -Path $KeyFilePath -Raw).Trim()
+
+if ([string]::IsNullOrWhiteSpace($API_KEY)) {
+    Write-Host "Error: The API key file at $KeyFilePath is empty." -ForegroundColor Red
+    exit
+}
+
+# 2. Resolve the Target Folder containing the images
+try {
+    $ResolvedFolder = (Resolve-Path $TARGET_FOLDER).Path
+} catch {
+    Write-Host "Error: Cannot find target folder '$TARGET_FOLDER'" -ForegroundColor Red
+    exit
+}
+
+$OUTPUT_FILE = [System.IO.Path]::Combine($ResolvedFolder, "marketplace_listings.txt")
 
 # ==================================================================================
 # SCRIPT LOGIC
@@ -28,22 +59,28 @@ $Uri = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash
 
 # Supported image extensions
 $ImageExtensions = @('.jpg', '.jpeg', '.png', '.webp')
-$Images = Get-ChildItem -Path $TARGET_FOLDER | Where-Object { $_.Extension.ToLower() -in $ImageExtensions }
+$Images = Get-ChildItem -Path $ResolvedFolder | Where-Object { $_.Extension.ToLower() -in $ImageExtensions }
 
 if ($Images.Count -eq 0) {
-    Write-Host "No valid images found in $TARGET_FOLDER" -ForegroundColor Yellow
+    Write-Host "No valid images found in $ResolvedFolder" -ForegroundColor Yellow
     exit
 }
 
-Write-Host "Found $($Images.Count) images. Starting description generation..." -ForegroundColor Cyan
+Write-Host "API Key loaded from current directory." -ForegroundColor Green
+Write-Host "Found $($Images.Count) images in '$TARGET_FOLDER'. Starting generation..." -ForegroundColor Cyan
 "--- MARKETPLACE GENERATED LISTINGS ---`n" | Out-File -FilePath $OUTPUT_FILE -Encoding utf8
 
 foreach ($Image in $Images) {
-    Write-Host "Processing: $($Image.Name)..." -ForegroundColor Data
+    Write-Host "Processing: $($Image.Name)..." -ForegroundColor Cyan
 
     # Convert image to Base64
-    $Bytes = [System.IO.File]::ReadAllBytes($Image.FullName)
-    $Base64Image = [Convert]::ToBase64String($Bytes)
+    try {
+        $Bytes = [System.IO.File]::ReadAllBytes($Image.FullName)
+        $Base64Image = [Convert]::ToBase64String($Bytes)
+    } catch {
+        Write-Host "Failed to read image file $($Image.Name): $_" -ForegroundColor Red
+        continue
+    }
     
     # Determine MIME type
     $MimeType = switch ($Image.Extension.ToLower()) {
@@ -93,7 +130,7 @@ $GeneratedText
 "@
         # Append to the output file and print to console
         $OutputBlock | Out-File -FilePath $OUTPUT_FILE -Append -Encoding utf8
-        Write-Host "Success! Saved to output file.`n" -ForegroundColor Green
+        Write-Host "Success! Saved to target folder output file.`n" -ForegroundColor Green
 
     } catch {
         Write-Host "Error processing $($Image.Name): $_" -ForegroundColor Red
@@ -109,31 +146,25 @@ Write-Host "Done! All descriptions have been saved to: $OUTPUT_FILE" -Foreground
 
 ---
 
-### How to Use It
+### How Your Workspace Looks Now
 
-1. Open the script and replace `"YOUR_GEMINI_API_KEY_HERE"` with your actual API key.
-2. Update the `$TARGET_FOLDER` path to point to the folder containing your product photos (e.g., `"C:\Users\You\Desktop\Listings"`).
-3. Open PowerShell, navigate to where you saved the script, and run it:
-```powershell
-.\Generate-Descriptions.ps1
+You keep your API key in your central script directory, and target whatever folder you want:
+
+```text
+📁 current_directory/ (./)
+├── 📄 Generate-Descriptions.ps1
+├── 📄 api_key.txt                   <-- Checked here
+└── 📁 Scalextric C1020 Hockenhiem/   <-- Passed as argument
+    ├── 📷 car_front.jpg
+    └── 📷 track_set.png
 
 ```
 
+### Running It
 
+```powershell
+./Generate-Descriptions.ps1 'Scalextric C1020 Hockenhiem'
 
-### What Happens Next?
+```
 
-The script will loop through every image in that folder, send it to the AI, and output a beautifully formatted text file called `marketplace_listings.txt` right inside that same folder. It will look something like this:
-
-> **FILE: vintage_camera.jpg**
-> ### Title: Vintage Canon AE-1 35mm Film Camera - Classic Silver/Black
-> 
-> 
-> ### Description:
-> 
-> 
-> Up for sale is a beautiful, classic Canon AE-1 35mm film camera. Perfect for photography students, vintage enthusiasts, or collectors...
-> ### Tags:
-> 
-> 
-> #VintageCamera #35mmFilm #CanonAE1 #FilmPhotography #RetroTech
+The script will successfully pull the key from your current directory, sweep the Scalextric folder for images, and output the `marketplace_listings.txt` file cleanly inside the Scalextric folder.
